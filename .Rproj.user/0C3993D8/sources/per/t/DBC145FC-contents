@@ -1,0 +1,584 @@
+---
+runtime: shiny 
+title: "Metabolite Exploration"
+author: "Code by Steve Chamberlain"
+date: "5/31/2021"
+output: 
+  html_document
+---
+<style>
+body {
+    position: absolute;
+    left: 10px;}
+}
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(readxl)
+library(writexl)
+library(dplyr)
+library(reshape)
+library(ggpubr)
+library(viridis)
+library(hrbrthemes)
+library(ggrepel)
+library(formattable)
+library(plotly)
+library(ggiraph)
+library(Hmisc)
+library(shiny)
+
+options(scipen = 999)
+
+load("workspace_for_shiny.RData")
+
+```
+
+
+
+# {.tabset}
+
+## Citric Acid Cycle
+
+<a title="Narayanese, WikiUserPedia, YassineMrabet, TotoBaggins, CC BY-SA 3.0 &lt;https://creativecommons.org/licenses/by-sa/3.0&gt;, via Wikimedia Commons" href="https://commons.wikimedia.org/wiki/File:Citric_acid_cycle_with_aconitate_2.svg"><img width="1024" alt="Citric acid cycle with aconitate 2" src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/0b/Citric_acid_cycle_with_aconitate_2.svg/1024px-Citric_acid_cycle_with_aconitate_2.svg.png"></a>
+
+<a href="https://commons.wikimedia.org/wiki/File:Citric_acid_cycle_with_aconitate_2.svg">Narayanese, WikiUserPedia, YassineMrabet, TotoBaggins</a>, <a href="https://creativecommons.org/licenses/by-sa/3.0">CC BY-SA 3.0</a>, via Wikimedia Commons
+
+
+## Tables {.tabset}
+
+### Master Data
+
+```{r, echo = FALSE}
+
+renderDataTable({
+  master_csf_melted_df %>%
+    mutate_if(is.numeric, list(~format(round(as.numeric(.), 0), nsmall=0, big.mark=",")))
+})
+
+```
+
+### Summary Statistics
+
+```{r, echo = FALSE}
+
+renderDataTable({
+  summary_stats %>% 
+    mutate_if(is.numeric, list(~format(round(as.numeric(.), 0), nsmall=0, big.mark=",")))
+})
+
+```
+
+
+### Pearson Correlation
+
+```{r, echo = FALSE}
+
+renderDataTable({
+  metab_corr_combine_melt_df %>% 
+    dplyr::select(sample_id, X1, X2, r, n, p) %>% 
+    mutate_if(is.numeric, list(~format(round(as.numeric(.), 3))))
+})
+
+```
+
+### Wilcoxon and % Difference
+
+```{r, echo = FALSE}
+
+renderDataTable({
+  wilcox_df %>% 
+    mutate(pct_diff_mean = percent(chg_mean - 1, digits = 1)
+         , pct_diff_median = percent(chg_median - 1, digits = 1)) %>% 
+    mutate_at(c("p_value", "chg_mean", "chg_median"), list(~format(round(as.numeric(.), 3), nsmall=0, big.mark=",")))
+})
+
+```
+
+## Graphs {.tabset}
+
+### Volcano 
+
+```{r, echo = FALSE}
+inputPanel(
+  selectInput("compare_val", label = "compare:",
+              choices = c("Immuno/NoIm", "Immuno/Control", "NoIm/Control"), selected = "Immuno/NoIm"),
+  # numericInput("pval", label = "p-threshold:", value = 0.05, min = 0, max = 1, width = NULL, step = 0.01),
+  numericInput("change_val", label = "fold change in mean:", value = 0.50, min = 0, width = NULL, step = 0.05)
+)
+
+renderPlot({
+
+volcano_df <- wilcox_df %>% filter(!is.na(p_value) & compare == input$compare_val)
+
+volcano_df$change <- "NO"
+volcano_df$change[log2(volcano_df$chg_median) > input$change_val & volcano_df$p_value < 0.05] <- "UP"
+volcano_df$change[log2(volcano_df$chg_median) < (-input$change_val) & volcano_df$p_value < 0.05] <- "DOWN"
+
+volcano_df$delabel <- NA
+volcano_df$delabel[volcano_df$change != "NO"] <- volcano_df$metabolite[volcano_df$change != "NO"]
+
+
+p_volcano <- 
+  ggplot(data=volcano_df, aes(x=log2(chg_median), y=-log10(p_value), col=change, label=delabel, text=metabolite)) +
+  geom_point() +
+  theme_minimal() +
+  geom_text_repel() +
+  scale_color_manual(values=c("blue", "black", "red")) +
+  geom_vline(xintercept=c(-input$change_val, input$change_val), col="gray") +
+  geom_hline(yintercept=-log10(0.05), col="darkgray")
+
+p_volcano
+
+}, width = 1200, height = 600)
+
+renderDataTable({
+  volcano_df <- 
+    wilcox_df %>% 
+    filter(!is.na(p_value) & compare == input$compare_val) %>% 
+    mutate(p_value = round(as.numeric(p_value), 3) 
+         , pct_diff_mean = percent(chg_mean - 1, digits = 0)
+         , pct_diff_median = percent(chg_median - 1, digits = 0)) 
+
+  volcano_df$change <- "NO"
+  volcano_df$change[log2(volcano_df$chg_median) > input$change_val & volcano_df$p_value < 0.05] <- "UP"
+  volcano_df$change[log2(volcano_df$chg_median) < (-input$change_val) & volcano_df$p_value < 0.05] <- "DOWN"
+  
+  volcano_df %>% 
+    arrange(desc(chg_median)) %>%
+    dplyr::select(-c(chg_median, chg_median)) %>% 
+    filter(change %in% c("UP","DOWN")) 
+})
+
+```
+
+### Volcano - All 3
+
+```{r, echo = FALSE}
+inputPanel(
+  selectInput("compare_val", label = "compare:",
+              choices = c("Immuno/NoIm", "Immuno/Control", "NoIm/Control"), selected = "Immuno/NoIm"),
+  numericInput("change_val2", label = "fold change in mean:", value = 0.50, min = 0, width = NULL, step = 0.05)
+)
+
+renderPlot({
+
+volcano_df <- wilcox_df %>% filter(!is.na(p_value) & compare == "Immuno/NoIm")
+
+volcano_df$change <- "NO"
+volcano_df$change[log2(volcano_df$chg_mean) > input$change_val2 & volcano_df$p_value < 0.05] <- "UP"
+volcano_df$change[log2(volcano_df$chg_mean) < (-input$change_val2) & volcano_df$p_value < 0.05] <- "DOWN"
+
+volcano_df$delabel <- NA
+volcano_df$delabel[volcano_df$change != "NO"] <- volcano_df$metabolite[volcano_df$change != "NO"]
+
+
+p_volcano <- 
+  ggplot(data=volcano_df, aes(x=log2(chg_mean), y=-log10(p_value), col=change, label=delabel, text=metabolite)) +
+  geom_point() +
+  theme_minimal() +
+  geom_text_repel() +
+  scale_color_manual(values=c("blue", "black", "red")) +
+  geom_vline(xintercept=c(-input$change_val2, input$change_val2), col="gray") +
+  geom_hline(yintercept=-log10(0.05), col="darkgray") +
+  ggtitle("Immuno/NoIm")
+
+p_volcano
+
+}, width = 1000, height = 600)
+
+renderPlot({
+
+volcano_df <- wilcox_df %>% filter(!is.na(p_value) & compare == "Immuno/Control")
+
+volcano_df$change <- "NO"
+volcano_df$change[log2(volcano_df$chg_mean) > input$change_val2 & volcano_df$p_value < 0.05] <- "UP"
+volcano_df$change[log2(volcano_df$chg_mean) < (-input$change_val2) & volcano_df$p_value < 0.05] <- "DOWN"
+
+volcano_df$delabel <- NA
+volcano_df$delabel[volcano_df$change != "NO"] <- volcano_df$metabolite[volcano_df$change != "NO"]
+
+
+p_volcano <- 
+  ggplot(data=volcano_df, aes(x=log2(chg_mean), y=-log10(p_value), col=change, label=delabel, text=metabolite)) +
+  geom_point() +
+  theme_minimal() +
+  geom_text_repel() +
+  scale_color_manual(values=c("blue", "black", "red")) +
+  geom_vline(xintercept=c(-input$change_val2, input$change_val2), col="gray") +
+  geom_hline(yintercept=-log10(0.05), col="darkgray") + 
+  ggtitle("Immuno/Control")
+
+p_volcano
+
+}, width = 1000, height = 600)
+
+renderPlot({
+
+volcano_df <- wilcox_df %>% filter(!is.na(p_value) & compare == "Immuno/NoIm")
+
+volcano_df$change <- "NO"
+volcano_df$change[log2(volcano_df$chg_mean) > input$change_val2 & volcano_df$p_value < 0.05] <- "UP"
+volcano_df$change[log2(volcano_df$chg_mean) < (-input$change_val2) & volcano_df$p_value < 0.05] <- "DOWN"
+
+volcano_df$delabel <- NA
+volcano_df$delabel[volcano_df$change != "NO"] <- volcano_df$metabolite[volcano_df$change != "NO"]
+
+
+p_volcano <- 
+  ggplot(data=volcano_df, aes(x=log2(chg_mean), y=-log10(p_value), col=change, label=delabel, text=metabolite)) +
+  geom_point() +
+  theme_minimal() +
+  geom_text_repel() +
+  scale_color_manual(values=c("blue", "black", "red")) +
+  geom_vline(xintercept=c(-input$change_val2, input$change_val2), col="gray") +
+  geom_hline(yintercept=-log10(0.05), col="darkgray") + 
+  ggtitle("Immuno/NoIm")
+
+p_volcano
+
+}, width = 1000, height = 600)
+
+```
+
+
+### Distribution: p <0.05
+
+```{r, echo = FALSE}
+
+
+fluidRow(
+  column(6,
+       inputPanel(
+  selectInput("metab_box1", label = "metabolite:",
+              choices = metab_signif_vars, selected = metab_signif_vars[1]),
+  selectInput("points_val1", label = "points:",
+              choices = c("all", "outliers", "none"), selected = "none"))  
+         ),
+  
+  
+   column(6,
+       inputPanel(
+  selectInput("n_breaks", label = "Number of bins:",
+              choices = c(10, 20, 30), selected = 20),
+  sliderInput("bw_adjust", label = "Bandwidth adjustment:",
+              min = 0.2, max = 2, value = 1, step = 0.2))  
+         ),
+      
+         )
+
+fluidRow(
+  column(6,
+    renderPlot({
+      
+   plot_data <- master_csf_melted_df %>%
+    filter(variable == input$metab_box1) %>%
+    mutate(sample = paste0(sample_id, "\n", "n=", valid_values))
+      
+      p <- plot_data %>%
+    ggplot(aes(x = sample,
+               y = value,
+               fill = sample_id)) +
+      geom_boxplot(outlier.shape = ifelse(input$points_val1 != "outliers", NA, 19)) +
+      ggtitle(input$metab_box1) +
+      ylab("measurement") +
+      xlab("sample_id")
+
+  if(input$points_val == "none"){
+
+    control <-
+      master_csf_melted_df %>%
+  filter(variable == input$metab_box1) %>%
+      filter(sample_id == "Control") %>%
+       dplyr::select(value)
+
+    Immuno <-
+     master_csf_melted_df %>%
+  filter(variable == input$metab_box1) %>%
+      filter(sample_id == "Immuno") %>%
+       dplyr::select(value)
+
+    NoIm <-
+      master_csf_melted_df %>%
+  filter(variable == input$metab_box1) %>%
+      filter(sample_id == "NoIm") %>%
+       dplyr::select(value)
+
+    ylim_min <- min(boxplot.stats(control[[1]])$stats[1],
+                    boxplot.stats(Immuno[[1]])$stats[1],
+                    boxplot.stats(NoIm[[1]])$stats[1])
+
+    ylim_max <- max(boxplot.stats(control[[1]])$stats[5],
+                    boxplot.stats(Immuno[[1]])$stats[5],
+                    boxplot.stats(NoIm[[1]])$stats[5]
+    )
+    p <- p + coord_cartesian(ylim = c(ylim_min, ylim_max))
+  }
+
+  if(input$points_val == "all"){
+    p <- p + geom_jitter(width = 0.1, colour = "black", alpha = 0.5)
+  }
+
+p
+      
+    }))
+         ,
+  column(6,
+    renderPlot({
+  
+  hist_df <- master_csf_melted_df %>% filter(!is.na(value) & variable == input$metab_box1)
+  
+  hist(hist_df$value, probability = TRUE, breaks = as.numeric(input$n_breaks),
+       xlab = "Measurement", main = "Distribution of Metabolite")
+
+  dens <- density(hist_df$value, adjust = input$bw_adjust)
+  lines(dens, col = "blue")
+})
+         )
+)
+
+
+
+renderTable({
+  table_data <-
+  summary_stats %>%
+  filter(variable == input$metab_box1) %>% 
+    mutate_if(is.numeric, list(~format(round(as.numeric(.), 0), nsmall=0, big.mark=",")))
+  Table = table_data
+})
+
+```
+
+
+
+### Distribution
+
+```{r, echo = FALSE}
+# inputPanel(
+#   selectInput("metabolite", label = "metabolite:",
+#               choices = metab_vars, selected = metab_vars[1]),
+#   selectInput("points_val", label = "points:",
+#               choices = c("all", "outliers", "none"), selected = "none"),
+#   selectInput("n_breaks", label = "Number of bins:",
+#               choices = c(10, 20, 30), selected = 20),
+#   sliderInput("bw_adjust", label = "Bandwidth adjustment:",
+#               min = 0.2, max = 2, value = 1, step = 0.2)
+# )
+
+# plot_data <- reactive(
+#     master_csf_melted_df %>%
+#     filter(variable == input$metabolite) %>% 
+#     mutate(sample = paste0(sample_id, "\n", "n=", valid_values)) 
+#   )
+
+
+fluidRow(
+  column(6,
+       inputPanel(
+  selectInput("metabolite", label = "metabolite:",
+              choices = metab_vars, selected = metab_vars[1]),
+  selectInput("points_val", label = "points:",
+              choices = c("all", "outliers", "none"), selected = "none"))  
+         ),
+  
+  
+   column(6,
+       inputPanel(
+  selectInput("n_breaks", label = "Number of bins:",
+              choices = c(10, 20, 30), selected = 20),
+  sliderInput("bw_adjust", label = "Bandwidth adjustment:",
+              min = 0.2, max = 2, value = 1, step = 0.2))  
+         ),
+      
+         )
+
+fluidRow(
+  column(6,
+    renderPlot({
+      
+   plot_data <- master_csf_melted_df %>%
+    filter(variable == input$metabolite) %>%
+    mutate(sample = paste0(sample_id, "\n", "n=", valid_values))
+      
+      p <- plot_data %>%
+    ggplot(aes(x = sample,
+               y = value,
+               fill = sample_id)) +
+      geom_boxplot(outlier.shape = ifelse(input$points_val != "outliers", NA, 19)) +
+      ggtitle(input$metabolite) +
+      ylab("measurement") +
+      xlab("sample_id")
+
+  if(input$points_val == "none"){
+
+    control <-
+      master_csf_melted_df %>%
+  filter(variable == input$metabolite) %>%
+      filter(sample_id == "Control") %>%
+       dplyr::select(value)
+
+    Immuno <-
+     master_csf_melted_df %>%
+  filter(variable == input$metabolite) %>%
+      filter(sample_id == "Immuno") %>%
+       dplyr::select(value)
+
+    NoIm <-
+      master_csf_melted_df %>%
+  filter(variable == input$metabolite) %>%
+      filter(sample_id == "NoIm") %>%
+       dplyr::select(value)
+
+    ylim_min <- min(boxplot.stats(control[[1]])$stats[1],
+                    boxplot.stats(Immuno[[1]])$stats[1],
+                    boxplot.stats(NoIm[[1]])$stats[1])
+
+    ylim_max <- max(boxplot.stats(control[[1]])$stats[5],
+                    boxplot.stats(Immuno[[1]])$stats[5],
+                    boxplot.stats(NoIm[[1]])$stats[5]
+    )
+    p <- p + coord_cartesian(ylim = c(ylim_min, ylim_max))
+  }
+
+  if(input$points_val == "all"){
+    p <- p + geom_jitter(width = 0.1, colour = "black", alpha = 0.5)
+  }
+
+p
+      
+    }))
+         ,
+  column(6,
+    renderPlot({
+  
+  hist_df <- master_csf_melted_df %>% filter(!is.na(value) & variable == input$metabolite)
+  
+  hist(hist_df$value, probability = TRUE, breaks = as.numeric(input$n_breaks),
+       xlab = "Measurement", main = "Distribution of Metabolite")
+
+  dens <- density(hist_df$value, adjust = input$bw_adjust)
+  lines(dens, col = "blue")
+})
+         )
+)
+
+
+
+renderTable({
+  table_data <-
+  summary_stats %>%
+  filter(variable == input$metabolite) %>% 
+    mutate_if(is.numeric, list(~format(round(as.numeric(.), 0), nsmall=0, big.mark=",")))
+  Table = table_data
+})
+
+```
+
+
+### Pearson Correlation: Any
+
+Mouse over data points to view information. Click and drag to zoom.
+
+```{r, echo = FALSE}
+inputPanel(
+  selectInput("metab_1", label = "metab_1:",
+              choices = metab_vars, selected = metab_vars[1]),
+  selectInput("metab_2", label = "metab_2:",
+              choices = metab_vars, selected = metab_vars[2]),
+  selectInput("sample_corr_any", label = "group:",
+              choices = c("All","Control","NoIm","Immuno"), selected = "All")
+)
+
+renderPlotly({
+
+corr_row <- metab_corr_combine_melt_df %>% 
+  filter(X1 == input$metab_1 & X2 == input$metab_2 & sample_id == input$sample_corr_any)
+x_var <- as.character(corr_row[[1,1]])
+y_var <- as.character(corr_row[[1,2]])
+
+if(input$sample_corr_any == "All"){
+  plot_data_pca <- master_csf_df
+}else{
+  plot_data_pca <- master_csf_df %>% filter(sample_id == input$sample_corr_any)
+}
+
+plot_data_pca <- plot_data_pca %>% mutate(color = ifelse(sample_id == "Control"
+                                                         , "#F8766D"
+                                                         , ifelse(sample_id == "Immuno"
+                                                                  , "#00BA38"
+                                                                  , "#619CFF")
+                                                         )
+                                          )
+col <- as.character(plot_data_pca$color)
+names(col) <- as.character(plot_data_pca$sample_id)
+
+
+p <- ggplotly(
+  ggplot(plot_data_pca, aes(x=!!sym(x_var), y=!!sym(y_var), color=sample_id, text=paste("mass_spect_id:", mass_spect_id))) +
+  scale_color_manual(values=col) +
+  geom_point() +
+  ggtitle(paste0(as.character(corr_row[[1, 6]]),
+                 ": ",
+                 corr_row[[1, 7]],
+                 " (r=", round(corr_row[[1, 3]], 3), 
+                 ", p=",round(corr_row[1,5], 3),
+                 ")"))
+)
+
+p
+
+
+})
+
+renderTable({metab_corr_combine_melt_df %>% 
+    select(-c(correlation_pair)) %>%  
+    filter(X1 == input$metab_1 & X2 == input$metab_2) %>% 
+    dplyr::select(X1, X2, sample_id, r,	n, p)
+  },
+  digits = 3
+) 
+    
+
+```
+
+
+### Pearson Correlation: Top 100 
+
+Mouse over data points to view information. Click and drag to zoom.
+
+Restricted to pairs with n>=6 and p<0.05. Ranked by abs(r).
+
+```{r, echo = FALSE}
+inputPanel(
+  selectInput("corr_pair", label = "correlation:",
+              choices = metab_corr_melt_df_top$correlation_pair, selected = metab_corr_melt_df_top$correlation_pair[1])
+)
+
+renderPlotly({
+  
+corr_row <- metab_corr_melt_df_top %>% filter(correlation_pair == input$corr_pair)
+x_var <- as.character(corr_row[[1,1]])
+y_var <- as.character(corr_row[[1,2]])
+
+p <- ggplotly(ggplot(master_csf_df, aes(x=!!sym(x_var), y=!!sym(y_var), color=sample_id, text=paste("mass_spect_id:", mass_spect_id))) +
+  geom_point() +
+  ggtitle(paste0(input$corr_pair,
+                 ": All",
+                 " (r=", round(corr_row[[1, 3]], 3), ", p=",round(corr_row[1,5], 3), ")"))
+)
+
+p
+
+
+})
+
+renderTable({metab_corr_combine_melt_df %>%
+    filter(correlation_pair == input$corr_pair) %>%
+  dplyr::select(-c(correlation_pair)) %>% 
+  dplyr::select(X1, X2, sample_id, r,	n, p)}, 
+  digits = 3)
+
+```

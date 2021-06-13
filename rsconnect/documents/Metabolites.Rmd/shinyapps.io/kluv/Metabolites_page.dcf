@@ -1,0 +1,13 @@
+name: Metabolites_page
+title: Metabolites_page
+username:
+account: kluv
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 4247907
+bundleId: 4696295
+url: https://kluv.shinyapps.io/Metabolites_page/
+when: 1623239100.35846
+lastSyncTime: 1623239100.35846
+asMultiple: FALSE
+asStatic: FALSE

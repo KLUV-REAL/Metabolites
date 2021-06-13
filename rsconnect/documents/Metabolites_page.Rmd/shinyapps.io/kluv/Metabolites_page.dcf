@@ -1,0 +1,14 @@
+name: Metabolites_page
+title: Metabolites_page
+username:
+account: kluv
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 4244317
+bundleId: 4693050
+url: https://kluv.shinyapps.io/Metabolites_page/
+when: 1623171783.63322
+lastSyncTime: 1623171783.63322
+asMultiple: TRUE
+asStatic: FALSE
+ignoredFiles: Metabolites.Rmd
